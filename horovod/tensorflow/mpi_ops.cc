@@ -1250,35 +1250,20 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
           //   numBucketsPerNode = numBuckets;
 
 
-          // find maxandmin and quantize for each bucket
-          // for(int j = 0; j < numBuckets; j++)
-          // {
-          //   cudaMemset(mutex_maxmin, 0, sizeof(int));
-          //   GPUFindMaxAndMin2(buffer_data + start_offset + 512 * j, maxandmin_recv[cou4] + j * 2, 
-          //     maxandmin_recv[cou4] + j * 2 + 1, mutex_maxmin, (j == numBuckets - 1) ? length % 512 : 512, 
-          //     horovod_global.streams[first_entry.device]);
-
-          //   // GPUQuantizeValue(quantizedGradients[cou4] + 512 * j, buffer_data + start_offset + 512 * j, 
-          //   //   maxandmin_send[cou4] + j * 2, (j == numBuckets - 1) ? length % 512 : 512, 
-          //   //   cuda_states, horovod_global.streams[first_entry.device]);
-          // }
-
-
-          cudaMemset(mutex_maxmin, 0, sizeof(int));
-          GPUFindMaxAndMin(buffer_data + start_offset, maxandmin_send[cou4], mutex_maxmin, length, horovod_global.streams[first_entry.device]);
+          // cudaMemset(mutex_maxmin, 0, sizeof(int));
+          GPUFindMaxAndMin(buffer_data + start_offset, maxandmin_send[cou4], length, horovod_global.streams[first_entry.device]);
 
 
           // for(int c = 0; c < 2; c++)
           // {
           //   if(c == 0)
-          //     printf("[%d->%d][origin, new]: [%f,%f],", rank, i, maxandmin_recv[cou4][c], maxandmin_send[cou4][c]);
+          //     printf("[%d->%d][origin - new]: [%f],", rank, i, maxandmin_recv[cou4][c] - maxandmin_send[cou4][c]);
           //   else if (c == 1)
-          //     printf("[%f,%f]\n", maxandmin_recv[cou4][c], maxandmin_send[cou4][c]);
+          //     printf("[%f]\n", maxandmin_recv[cou4][c] - maxandmin_send[cou4][c]);
           //   else
-          //     printf("[%f,%f],", maxandmin_recv[cou4][c], maxandmin_send[cou4][c]);
+          //     printf("[%f],", maxandmin_recv[cou4][c] - maxandmin_send[cou4][c]);
             
           // }
-
 
 
           GPUQuantizeValue(quantizedGradients[cou4], buffer_data + start_offset, 
@@ -1292,27 +1277,8 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
           request_reduce.push_back(MPI_Request());
           MPI_Isend(maxandmin_send[cou4], numBuckets * 2, dtype, i, 0, MPI_COMM_WORLD, &request_reduce.back());
           
-
           cou4++;
 
-          // for(int j = 0; j < numBuckets; j++)
-          // {
-          //   cudaMemset(mutex, 0, sizeof(int));
-          //   GPUFindMaxAndMin(buffer_data + start_offset + 512 * j, maxandminPerNode + j * 2, 
-          //     maxandminPerNode + j * 2 + 1, mutex, (j == numBuckets - 1) ? length % 512 : 512, 
-          //     horovod_global.streams[first_entry.device]);
-
-          //   GPUQuantizeValue(quantizedGradientsPerNode + 512 * j, buffer_data + start_offset + 512 * j, 
-          //     maxandminPerNode + j * 2, (j == numBuckets - 1) ? length % 512 : 512, 
-          //     cuda_states, horovod_global.streams[first_entry.device]);
-          // }
-
-
-          // maxandmin_send.push_back(maxandminPerNode); 
-          // quantizedGradients.push_back(quantizedGradientsPerNode);
-
-          // maxandmin_recv.push_back(maxandminPerNode_recv);
-          // quantizedGradients_recv.push_back(quantizedGradientsPerNode_recv);
         }
       }
 
@@ -1418,8 +1384,8 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
       // }
 
       
-      cudaMemset(mutex_maxmin, 0, sizeof(int));
-      GPUFindMaxAndMin(buffer_data + startElem, maxandmin_recv[0], mutex_maxmin, numElems, 
+      // cudaMemset(mutex_maxmin, 0, sizeof(int));
+      GPUFindMaxAndMin(buffer_data + startElem, maxandmin_recv[0], numElems, 
         horovod_global.streams[first_entry.device]);
 
       GPUQuantizeValue(quantizedGradients_recv[0], buffer_data + startElem, 
