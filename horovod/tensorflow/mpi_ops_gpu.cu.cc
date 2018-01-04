@@ -105,25 +105,20 @@ __global__ void _findMaxAndMin2(float *array, float *max, float *min, int *mutex
     }
 }
 
-__global__ void _findMaxAndMin(float *array, float *maxandmin, int *mutex, int n)
+__global__ void _findMaxAndMin(float *array, float *maxandmin, int n)
 {
     unsigned int index = threadIdx.x + blockIdx.x * blockDim.x;
     unsigned int stride = gridDim.x * blockDim.x;
 
-    int my_bucket = index / 512;
-    int index_in_bucket = index % 512;
-    int offset = (my_bucket&1) ? 512 : 0;
-    
-
-
     __shared__ float cache1[maxThreadsPerBlock];
     __shared__ float cache2[maxThreadsPerBlock];
 
-
-
-
     for(int j = index; j < n; j += stride)
     {
+
+        int my_bucket = j / 512;
+        int index_in_bucket = j % 512;
+        int offset = (my_bucket&1) ? 512 : 0;
 
         // reduction
         unsigned int i = 512 / 2;
@@ -148,6 +143,8 @@ __global__ void _findMaxAndMin(float *array, float *maxandmin, int *mutex, int n
             i /= 2;
         }
 
+        
+
         if(threadIdx.x == 0)
         {
             maxandmin[2 * my_bucket] = cache1[0];
@@ -159,7 +156,6 @@ __global__ void _findMaxAndMin(float *array, float *maxandmin, int *mutex, int n
             maxandmin[2 * my_bucket + 1] = cache2[512];
         }
     }
-
 
 }
 
@@ -180,14 +176,8 @@ __global__ void _quantizeValue(unsigned char *x, const float *y, const float *ma
     unsigned int index = threadIdx.x + blockIdx.x * blockDim.x;
     unsigned int stride = gridDim.x * blockDim.x;
 
-
     curandState local_state;
     local_state = states[index];
-
-    // curand_init(seed, 
-    //             index, 
-    //             0,
-    //             &state);
 
 
     for (int i = index; i < n; i += stride)
@@ -196,18 +186,18 @@ __global__ void _quantizeValue(unsigned char *x, const float *y, const float *ma
 
         float unit = (maxandmin[my_bucket * 2] - maxandmin[my_bucket * 2 + 1]) / 255.0;
 
-        // float d = (y[i] - maxandmin[1]) / unit + (curand(&local_state)%1000000 / 1000000.0); 
-        float d = (y[i] - maxandmin[my_bucket * 2 + 1]) / unit; 
-        float prob = d - int(d);
-        unsigned char c;
+        float d = (y[i] - maxandmin[my_bucket * 2 + 1]) / unit + (curand(&local_state)%1000001 / 1000000.0); 
+        // float d = (y[i] - maxandmin[my_bucket * 2 + 1]) / unit; 
+        // float prob = d - int(d);
+        // unsigned char c;
 
-        if (curand(&local_state)%1000001 / 1000000.0 < prob)
-            c = (unsigned char)(int(d) + 1);
-        else
-            c = (unsigned char)(int(d));
+        // if (curand(&local_state)%1000001 / 1000000.0 < prob)
+        //     c = (unsigned char)(int(d) + 1);
+        // else
+        //     c = (unsigned char)(int(d));
 
-        // x[i] = (unsigned char) floor(d);
-        x[i] = c;
+        x[i] = (unsigned char) floor(d);
+        // x[i] = c;
     }
     states[index] = local_state;       
 }
@@ -221,7 +211,6 @@ __global__ void _dequantizeValue(unsigned char *recv, float *maxandmin, float *x
     unsigned int stride = gridDim.x * blockDim.x;
 
     // float unit = (maxandmin[0] - maxandmin[1]) / 255.0; 
-
 
     for (int i = index; i < n; i += stride)
     {
@@ -274,10 +263,10 @@ void GPUAdd(int n, float *x, float *y, cudaStream_t stream)
 }
 
 
-void GPUFindMaxAndMin(float *array, float *maxandmin, int *mutex, int n, cudaStream_t stream)
+void GPUFindMaxAndMin(float *array, float *maxandmin, int n, cudaStream_t stream)
 {
     int blocksPerGrid = (int) ceil(1.0 * n / maxThreadsPerBlock);
-    _findMaxAndMin<<<blocksPerGrid, maxThreadsPerBlock, 0, stream>>>(array, maxandmin, mutex, n);
+    _findMaxAndMin<<<blocksPerGrid, maxThreadsPerBlock, 0, stream>>>(array, maxandmin, n);
     cudaStreamSynchronize(stream);
     
 }
