@@ -31,7 +31,7 @@
 void GPUScaleAndAdd(int n, float scale1, float *x, float scale2, float *y, cudaStream_t stream);
 void GPUScale(int n, float scaler, float *x, cudaStream_t stream);
 void GPUAdd(int n, float *x, float *y, cudaStream_t stream);
-void GPUFindMaxAndMin(float *array, float *maxandmin, int *mutex, int n, cudaStream_t stream);
+void GPUFindMaxAndMin(float *array, float *maxandmin, int n, cudaStream_t stream);
 curandState* GPUInit_curand(int n, unsigned int seed, cudaStream_t stream);
 void GPUQuantizeValue(unsigned char *x, float *y, float *maxandmin, int n, curandState* states, cudaStream_t stream);
 void GPUDequantizeValue(unsigned char *recv, float *maxandmin, float *x, int n, cudaStream_t stream);
@@ -40,9 +40,3 @@ void GPUCopyValue(float* x, float* y, int n, cudaStream_t stream);
 void GPUFindMaxAndMin2(float *array, float *max, float *min, int *mutex, int n, cudaStream_t stream);
 
 #endif
-
-
-
-
-
-
