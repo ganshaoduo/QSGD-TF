@@ -1090,7 +1090,6 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
     }
 
 
-    // printf("fff\n");
 
     // if (entries.size() > 1) {
 
@@ -1100,18 +1099,12 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
       MPI_Comm_rank(MPI_COMM_WORLD, &rank);
       MPI_Comm_size(MPI_COMM_WORLD, &numNodes);
 
-      // long MPIinitial_start = GetTimeStamp();
-      // printf("[%d]111\n", rank);
 
+      //allocate memory for buffers in the first step.
 
       // int *mutex_maxmin;
       if(mutex_maxmin == nullptr)
         cudaMallocManaged(&mutex_maxmin, sizeof(int));
-
-      //allocate #tensor_fusion_threshold bytes of buffer space for MPI communication
-      // float *buffer_data;
-      // // if(buffer_data == nullptr)   
-      // cudaMallocManaged(&buffer_data, horovod_global.tensor_fusion_threshold);
 
       // float *dequan_buffer;
       if(dequan_buffer == nullptr)
@@ -1119,12 +1112,6 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
 
       if(cuda_states == nullptr)
         cuda_states = GPUInit_curand(horovod_global.tensor_fusion_threshold / numNodes / 4, time(NULL), horovod_global.streams[first_entry.device]);
-
-
-      // std::vector<float*> maxandmin_send;
-      // std::vector<float*> maxandmin_recv;
-      // std::vector<unsigned char*> quantizedGradients;
-      // std::vector<unsigned char*> quantizedGradients_recv;
 
 
       if(quantizedGradients.size() != (numNodes - 1))
@@ -1154,15 +1141,6 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
 
       }
 
-      // long MPIinitial_end = GetTimeStamp();
-      // printf("activityType:MPIinitial=start_ts:%ld=duration:%ld=workerId:%d\n", 
-      //   MPIinitial_start, MPIinitial_end - MPIinitial_start, (int) rank);
-
-
-      // long CPdatabuffer_start = GetTimeStamp();
-
-
-      // printf("[%d]222\n", rank);
 
       // Access the fusion buffer.
       auto buffer_data =
@@ -1171,9 +1149,7 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
               ->tensor_data()
               .data();
 
-      // Copy memory into the fusion buffer.
-
-
+      // Copy tensor values into the fusion buffer.
       ACTIVITY_START_ALL(entries, timeline, "MEMCPY_IN_FUSION_BUFFER")
       size_t offset = 0;
       for (auto it = entries.begin(); it != entries.end(); it++) {
@@ -1209,15 +1185,7 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
       ACTIVITY_START_ALL(entries, timeline, "MPI_ALLREDUCE")
 
 
-
-      // long CPdatabuffer_end = GetTimeStamp();
-      // printf("activityType:CPdatabuffer=start_ts:%ld=duration:%ld=workerId:%d\n", 
-      //   CPdatabuffer_start, CPdatabuffer_end - CPdatabuffer_start, (int) rank);
-
-
-
-      // long quantization1_start = GetTimeStamp();
-
+      //get number of elements in data buffer
       size_t num_elements = 0;
       for (auto it = entries.begin(); it != entries.end(); it++) {
         num_elements += it->tensor.NumElements();
@@ -1230,11 +1198,6 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
       int startElem = (numElemsPerNode * rank) + std::min(residue, rank);
       int numElems = numElemsPerNode + ((rank < residue) ? 1 : 0);
       int numBuckets = ceil(numElemsPerNode / 512.0); // 512 is the size of a bucket
-
-
-
-      // printf("[%d]numElems:%d; numTensors:%d; numElemsPerNode%512.0: %d\n", 
-      //   rank, (int)num_elements, (int)entries.size(), numElemsPerNode % 512);
 
 
       std::vector<MPI_Request> request_reduce;
