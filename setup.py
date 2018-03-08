@@ -14,11 +14,12 @@
 # ==============================================================================
 import os
 from distutils.errors import CompileError, DistutilsError, DistutilsPlatformError, LinkError
-from setuptools import setup, Extension, find_packages
-from setuptools.command.build_ext import build_ext
+from setuptools import setup, find_packages
+# from setuptools.command.build_ext import build_ext
+from Cython.Distutils import build_ext
+from distutils.extension import Extension
 import shlex
 import subprocess
-import sys
 import textwrap
 import traceback
 
@@ -44,33 +45,6 @@ def check_tf_version():
             'Your TensorFlow version is outdated.  Horovod requires tensorflow>=1.1.0')
 
 
-def get_cpp_flags(build_ext):
-    last_err = None
-    default_flags = ['-std=c++11', '-fPIC', '-O2']
-    if sys.platform == 'darwin':
-        # Darwin most likely will have Clang, which has libc++.
-        flags_to_try = [default_flags + ['-stdlib=libc++'], default_flags]
-    else:
-        flags_to_try = [default_flags, default_flags + ['-stdlib=libc++']]
-    for cpp_flags in flags_to_try:
-        try:
-            test_compile(build_ext, 'test_cpp_flags', extra_preargs=cpp_flags,
-                         code=textwrap.dedent('''\
-                    #include <unordered_map>
-                    void test() {
-                    }
-                    '''))
-
-            return cpp_flags
-        except (CompileError, LinkError):
-            last_err = 'Unable to determine C++ compilation flags (see error above).'
-        except Exception:
-            last_err = 'Unable to determine C++ compilation flags.  ' \
-                       'Last error:\n\n%s' % traceback.format_exc()
-
-    raise DistutilsPlatformError(last_err)
-
-
 def get_tf_include_dirs():
     import tensorflow as tf
     tf_inc = tf.sysconfig.get_include()
@@ -83,13 +57,12 @@ def get_tf_lib_dirs():
     return [tf_lib]
 
 
-def get_tf_libs(build_ext, lib_dirs, cpp_flags):
+def get_tf_libs(build_ext, lib_dirs):
     last_err = None
     for tf_libs in [['tensorflow_framework'], []]:
         try:
             lib_file = test_compile(build_ext, 'test_tensorflow_libs',
                                     library_dirs=lib_dirs, libraries=tf_libs,
-                                    extra_preargs=cpp_flags,
                                     code=textwrap.dedent('''\
                     void test() {
                     }
@@ -108,7 +81,7 @@ def get_tf_libs(build_ext, lib_dirs, cpp_flags):
     raise DistutilsPlatformError(last_err)
 
 
-def get_tf_abi(build_ext, include_dirs, lib_dirs, libs, cpp_flags):
+def get_tf_abi(build_ext, include_dirs, lib_dirs, libs):
     last_err = None
     cxx11_abi_macro = '_GLIBCXX_USE_CXX11_ABI'
     for cxx11_abi in ['0', '1']:
@@ -116,8 +89,7 @@ def get_tf_abi(build_ext, include_dirs, lib_dirs, libs, cpp_flags):
             lib_file = test_compile(build_ext, 'test_tensorflow_abi',
                                     macros=[(cxx11_abi_macro, cxx11_abi)],
                                     include_dirs=include_dirs, library_dirs=lib_dirs,
-                                    libraries=libs, extra_preargs=cpp_flags,
-                                    code=textwrap.dedent('''\
+                                    libraries=libs, code=textwrap.dedent('''\
                 #include <string>
                 #include "tensorflow/core/framework/op.h"
                 #include "tensorflow/core/framework/op_kernel.h"
@@ -140,7 +112,7 @@ def get_tf_abi(build_ext, include_dirs, lib_dirs, libs, cpp_flags):
     raise DistutilsPlatformError(last_err)
 
 
-def get_tf_flags(build_ext, cpp_flags):
+def get_tf_flags(build_ext):
     import tensorflow as tf
     try:
         return tf.sysconfig.get_compile_flags(), tf.sysconfig.get_link_flags()
@@ -148,8 +120,8 @@ def get_tf_flags(build_ext, cpp_flags):
         # fallback to the previous logic
         tf_include_dirs = get_tf_include_dirs()
         tf_lib_dirs = get_tf_lib_dirs()
-        tf_libs = get_tf_libs(build_ext, tf_lib_dirs, cpp_flags)
-        tf_abi = get_tf_abi(build_ext, tf_include_dirs, tf_lib_dirs, tf_libs, cpp_flags)
+        tf_libs = get_tf_libs(build_ext, tf_lib_dirs)
+        tf_abi = get_tf_abi(build_ext, tf_include_dirs, tf_lib_dirs, tf_libs)
 
         compile_flags = []
         for include_dir in tf_include_dirs:
@@ -167,7 +139,7 @@ def get_tf_flags(build_ext, cpp_flags):
 
 
 def get_mpi_flags():
-    show_command = os.environ.get('HOROVOD_MPICXX_SHOW', 'mpicxx -show')
+    show_command = os.environ.get('HOROVOD_MPICXX_SHOW', '/usr/local/mpi/bin/mpicxx -show')
     try:
         mpi_show_output = subprocess.check_output(
             shlex.split(show_command), universal_newlines=True).strip()
@@ -186,8 +158,7 @@ def get_mpi_flags():
             '%s' % (show_command, traceback.format_exc()))
 
 
-def test_compile(build_ext, name, code, libraries=None, include_dirs=None, library_dirs=None, macros=None,
-                 extra_preargs=None):
+def test_compile(build_ext, name, code, libraries=None, include_dirs=None, library_dirs=None, macros=None):
     test_compile_dir = os.path.join(build_ext.build_temp, 'test_compile')
     if not os.path.exists(test_compile_dir):
         os.makedirs(test_compile_dir)
@@ -201,7 +172,7 @@ def test_compile(build_ext, name, code, libraries=None, include_dirs=None, libra
     shared_object_file = compiler.shared_object_filename(
         name, output_dir=test_compile_dir)
 
-    compiler.compile([source_file], extra_preargs=extra_preargs,
+    compiler.compile([source_file], extra_preargs=['-std=c++11'],
                      include_dirs=include_dirs, macros=macros)
     compiler.link_shared_object(
         [object_file], shared_object_file, libraries=libraries, library_dirs=library_dirs)
@@ -209,7 +180,7 @@ def test_compile(build_ext, name, code, libraries=None, include_dirs=None, libra
     return shared_object_file
 
 
-def get_cuda_dirs(build_ext, cpp_flags):
+def get_cuda_dirs(build_ext):
     cuda_include_dirs = []
     cuda_lib_dirs = []
 
@@ -228,12 +199,12 @@ def get_cuda_dirs(build_ext, cpp_flags):
 
     if not cuda_include_dirs and not cuda_lib_dirs:
         # default to /usr/local/cuda
-        cuda_include_dirs += ['/usr/local/cuda/include']
-        cuda_lib_dirs += ['/usr/local/cuda/lib', '/usr/local/cuda/lib64']
+        cuda_include_dirs += ['/usr/local/cuda-8.0/include']
+        cuda_lib_dirs += ['/usr/local/cuda-8.0/lib64']
 
     try:
         test_compile(build_ext, 'test_cuda', libraries=['cudart'], include_dirs=cuda_include_dirs,
-                     library_dirs=cuda_lib_dirs, extra_preargs=cpp_flags, code=textwrap.dedent('''\
+                     library_dirs=cuda_lib_dirs, code=textwrap.dedent('''\
             #include <cuda_runtime.h>
             void test() {
                 cudaSetDevice(0);
@@ -252,7 +223,7 @@ def get_cuda_dirs(build_ext, cpp_flags):
     return cuda_include_dirs, cuda_lib_dirs
 
 
-def get_nccl_dirs(build_ext, cuda_include_dirs, cuda_lib_dirs, cpp_flags):
+def get_nccl_dirs(build_ext, cuda_include_dirs, cuda_lib_dirs):
     nccl_include_dirs = []
     nccl_lib_dirs = []
 
@@ -271,7 +242,7 @@ def get_nccl_dirs(build_ext, cuda_include_dirs, cuda_lib_dirs, cpp_flags):
 
     try:
         test_compile(build_ext, 'test_nccl', libraries=['nccl'], include_dirs=nccl_include_dirs + cuda_include_dirs,
-                     library_dirs=nccl_lib_dirs + cuda_lib_dirs, extra_preargs=cpp_flags, code=textwrap.dedent('''\
+                     library_dirs=nccl_lib_dirs + cuda_lib_dirs, code=textwrap.dedent('''\
             #include <nccl.h>
             #if NCCL_MAJOR < 2
             #error Horovod requires NCCL 2.0 or later version, please upgrade.
@@ -294,11 +265,51 @@ def get_nccl_dirs(build_ext, cuda_include_dirs, cuda_lib_dirs, cpp_flags):
     return nccl_include_dirs, nccl_lib_dirs
 
 
+
+def customize_compiler_for_nvcc(self):
+    """inject deep into distutils to customize how the dispatch
+    to gcc/nvcc works.
+    If you subclass UnixCCompiler, it's not trivial to get your subclass
+    injected in, and still have the right customizations (i.e.
+    distutils.sysconfig.customize_compiler) run on it. So instead of going
+    the OO route, I have this. Note, it's kindof like a wierd functional
+    subclassing going on."""
+
+    # tell the compiler it can processes .cu
+    self.src_extensions.append('.cu')
+
+    # save references to the default compiler_so and _comple methods
+    default_compiler_so = self.compiler_so
+    super = self._compile
+
+    # now redefine the _compile method. This gets executed for each
+    # object but distutils doesn't have the ability to change compilers
+    # based on source extension: we add it.
+    def _compile(obj, src, ext, cc_args, extra_postargs, pp_opts):
+        if os.path.split(src)[1] == 'mpi_ops_gpu.cu.cc':
+            # use the cuda for .cu files
+            self.set_executable('compiler_so', ['/usr/local/cuda/bin/nvcc'])
+            # use only a subset of the extra_postargs, which are 1-1 translated
+            # from the extra_compile_args in the Extension class
+            postargs = extra_postargs['nvcc']
+            # postargs = extra_postargs.append('nvcc')
+        else:
+            #self.set_executable('compiler_so', ['/usr/local/mpi/bin/mpicc'])
+            postargs = extra_postargs['gcc']
+            # postargs = extra_postargs.append('gcc')
+
+        super(obj, src, ext, cc_args, postargs, pp_opts)
+        # reset the default compiler_so, which we might have changed for cuda
+        self.compiler_so = default_compiler_so
+
+    # inject our redefined _compile method into the class
+    self._compile = _compile
+
+
 def fully_define_extension(build_ext):
     check_tf_version()
 
-    cpp_flags = get_cpp_flags(build_ext)
-    tf_compile_flags, tf_link_flags = get_tf_flags(build_ext, cpp_flags)
+    tf_compile_flags, tf_link_flags = get_tf_flags(build_ext)
     mpi_flags = get_mpi_flags()
 
     gpu_allreduce = os.environ.get('HOROVOD_GPU_ALLREDUCE')
@@ -318,7 +329,7 @@ def fully_define_extension(build_ext):
 
     if gpu_allreduce or gpu_allgather or gpu_broadcast:
         have_cuda = True
-        cuda_include_dirs, cuda_lib_dirs = get_cuda_dirs(build_ext, cpp_flags)
+        cuda_include_dirs, cuda_lib_dirs = get_cuda_dirs(build_ext)
     else:
         have_cuda = False
         cuda_include_dirs = cuda_lib_dirs = []
@@ -326,26 +337,39 @@ def fully_define_extension(build_ext):
     if gpu_allreduce == 'NCCL':
         have_nccl = True
         nccl_include_dirs, nccl_lib_dirs = get_nccl_dirs(
-            build_ext, cuda_include_dirs, cuda_lib_dirs, cpp_flags)
+            build_ext, cuda_include_dirs, cuda_lib_dirs)
     else:
         have_nccl = False
         nccl_include_dirs = nccl_lib_dirs = []
 
     MACROS = []
     INCLUDES = []
-    SOURCES = ['horovod/tensorflow/mpi_message.cc',
+    SOURCES = [
+               'horovod/tensorflow/mpi_message.cc',
                'horovod/tensorflow/mpi_ops.cc',
-               'horovod/tensorflow/timeline.cc']
-    COMPILE_FLAGS = cpp_flags + shlex.split(mpi_flags) + tf_compile_flags
+               'horovod/tensorflow/timeline.cc',
+               'horovod/tensorflow/mpi_ops_gpu.cu.cc']
+    # COMPILE_FLAGS = ['-std=c++11', '-fPIC', '-O2'] + shlex.split(mpi_flags) + tf_compile_flags
+
+    COMPILE_FLAGS = {'gcc': ['-std=c++11', '-fPIC', '-O2', '-D GOOGLE_CUDA=1'] + shlex.split(mpi_flags) + tf_compile_flags,
+                     'nvcc': ['-c', '-std=c++11', '-x=cu', '-arch=sm_37',
+                                     '--ptxas-options=-v',
+                                     '--compiler-options',
+                                     '-fPIC',
+                                     '-D GOOGLE_CUDA=1'] + tf_compile_flags}
+
+
     LINK_FLAGS = shlex.split(mpi_flags) + tf_link_flags
     LIBRARY_DIRS = []
     LIBRARIES = []
+    RUNTIME_LIBRARY_DIRS = []
 
     if have_cuda:
         MACROS += [('HAVE_CUDA', '1')]
         INCLUDES += cuda_include_dirs
         LIBRARY_DIRS += cuda_lib_dirs
         LIBRARIES += ['cudart']
+        RUNTIME_LIBRARY_DIRS += ['/usr/local/cuda-8.0/lib64']
 
     if have_nccl:
         MACROS += [('HAVE_NCCL', '1')]
@@ -369,12 +393,14 @@ def fully_define_extension(build_ext):
     tensorflow_mpi_lib.extra_link_args = LINK_FLAGS
     tensorflow_mpi_lib.library_dirs = LIBRARY_DIRS
     tensorflow_mpi_lib.libraries = LIBRARIES
+    tensorflow_mpi_lib.runtime_library_dirs = RUNTIME_LIBRARY_DIRS
 
 
 # run the customize_compiler
 class custom_build_ext(build_ext):
     def build_extensions(self):
         fully_define_extension(self)
+        customize_compiler_for_nvcc(self.compiler)
         build_ext.build_extensions(self)
 
 
