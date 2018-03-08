@@ -1092,6 +1092,11 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &numNodes);
 
+    int bucket_size = 512;
+    int num_elements_division = 0;
+    size_t num_elements = 0;
+    size_t num_bytes = 0;
+
     // int *mutex_maxmin;
     if(mutex_maxmin == nullptr)
       cudaMalloc(&mutex_maxmin, sizeof(int));
@@ -1101,7 +1106,7 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
       cudaMalloc(&dequan_buffer, ceil(horovod_global.tensor_fusion_threshold / numNodes)); //size of dequan buffer is the max size for one chunk
 
     if(cuda_states == nullptr)
-      cuda_states = GPUInit_curand(ceil(horovod_global.tensor_fusion_threshold / numNodes / 4.0), time(NULL), horovod_global.streams[first_entry.device]);
+      cuda_states = GPUInit_curand(ceil(horovod_global.tensor_fusion_threshold / numNodes / sizeof(float)), time(NULL), horovod_global.streams[first_entry.device]);
 
 
     if(quantizedGradients.size() != (numNodes - 1))
@@ -1117,8 +1122,8 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
         unsigned char *quantizedGradientsPerNode_recv;
 
         //number of buckets per chunk * 2 floats
-        cudaMalloc(&maxandminPerNode, ceil(horovod_global.tensor_fusion_threshold / float(numNodes) / (512.0 * sizeof(float))) * 2 * sizeof(float));
-        cudaMalloc(&maxandminPerNode_recv, ceil(horovod_global.tensor_fusion_threshold / float(numNodes) / (512.0 * sizeof(float))) * 2 * sizeof(float));
+        cudaMalloc(&maxandminPerNode, ceil(horovod_global.tensor_fusion_threshold / float(numNodes) / (bucket_size * sizeof(float))) * 2 * sizeof(float));
+        cudaMalloc(&maxandminPerNode_recv, ceil(horovod_global.tensor_fusion_threshold / float(numNodes) / (bucket_size * sizeof(float))) * 2 * sizeof(float));
         cudaMalloc(&quantizedGradientsPerNode, ceil(horovod_global.tensor_fusion_threshold / float(numNodes) / 4.0));
         cudaMalloc(&quantizedGradientsPerNode_recv, ceil(horovod_global.tensor_fusion_threshold / float(numNodes) / 4.0));
 
@@ -1131,9 +1136,6 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
     }
 
 
-    int num_elements_division = 0;
-    size_t num_elements = 0;
-    size_t num_bytes = 0;
     for (auto it = entries.begin(); it != entries.end(); it++) 
     {
       num_elements += it->tensor.NumElements();
@@ -1195,18 +1197,17 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
       {
 
         num_elements_division = (division == (num_divisions - 1)) ? 
-        (num_bytes % horovod_global.tensor_fusion_threshold) / 4 : horovod_global.tensor_fusion_threshold / 4;
+        (num_bytes % horovod_global.tensor_fusion_threshold) / sizeof(float) : horovod_global.tensor_fusion_threshold / sizeof(float);
 
       }
 
-      int division_offset = division * (horovod_global.tensor_fusion_threshold / 4);
+      int division_offset = division * (horovod_global.tensor_fusion_threshold / sizeof(float));
       //partition the data_buffer into #numNodes chunksls
       int numElemsPerNode = num_elements_division / numNodes;
       int residue = num_elements_division % numNodes;
       int startElem = (numElemsPerNode * rank) + std::min(residue, rank);
       int numElems = numElemsPerNode + ((rank < residue) ? 1 : 0);
-      int numBuckets = ceil(numElemsPerNode / 512.0); // 512 is the size of a bucket
-
+      int numBuckets = ceil(numElemsPerNode / (double)bucket_size); 
 
       // printf("[%d]numElems:%d; numTensors:%d; division: %d\n", 
       //   rank, (int)num_elements, (int)entries.size(), division);
@@ -1535,7 +1536,6 @@ void BackgroundThreadLoop(HorovodGlobalState& state) {
   state.size = size;
   state.initialization_done = true;
 
-  // cuda_states = GPUInit_curand(512, time(NULL));//, horovod_global.streams[rank]);
 
   // Open the timeline file on coordinator.
   auto horovod_timeline = std::getenv("HOROVOD_TIMELINE");
