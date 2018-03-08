@@ -1076,8 +1076,6 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
 
     // printf("eee\n");
 
-
-
     MPI_Datatype dtype;
     status = GetMPIDataType(first_entry.tensor, &dtype);
 
@@ -1089,115 +1087,129 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
       return;
     }
 
+    //get MPI info
+    int rank, numNodes;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &numNodes);
+
+    // int *mutex_maxmin;
+    if(mutex_maxmin == nullptr)
+      cudaMalloc(&mutex_maxmin, sizeof(int));
+
+    // float *dequan_buffer;
+    if(dequan_buffer == nullptr)
+      cudaMalloc(&dequan_buffer, ceil(horovod_global.tensor_fusion_threshold / numNodes)); //size of dequan buffer is the max size for one chunk
+
+    if(cuda_states == nullptr)
+      cuda_states = GPUInit_curand(ceil(horovod_global.tensor_fusion_threshold / numNodes / 4.0), time(NULL), horovod_global.streams[first_entry.device]);
 
 
-    // if (entries.size() > 1) {
+    if(quantizedGradients.size() != (numNodes - 1))
+    {
 
-
-      //get MPI info
-      int rank, numNodes;
-      MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-      MPI_Comm_size(MPI_COMM_WORLD, &numNodes);
-
-
-      //allocate memory for buffers in the first step.
-
-      // int *mutex_maxmin;
-      if(mutex_maxmin == nullptr)
-        cudaMallocManaged(&mutex_maxmin, sizeof(int));
-
-      // float *dequan_buffer;
-      if(dequan_buffer == nullptr)
-        cudaMallocManaged(&dequan_buffer, ceil(horovod_global.tensor_fusion_threshold / numNodes)); //size of dequan buffer is the max size for one chunk
-
-      if(cuda_states == nullptr)
-        cuda_states = GPUInit_curand(horovod_global.tensor_fusion_threshold / numNodes / 4, time(NULL), horovod_global.streams[first_entry.device]);
-
-
-      if(quantizedGradients.size() != (numNodes - 1))
+      for(int i = 0; i < (numNodes - 1); i++)
       {
-        // printf("[%d]11111111111111\n", rank);
+        // printf("[%d]1111111\n", rank);
+        // allocate memory for this chunk
+        float *maxandminPerNode;
+        float *maxandminPerNode_recv; 
+        unsigned char *quantizedGradientsPerNode;
+        unsigned char *quantizedGradientsPerNode_recv;
 
-        for(int i = 0; i < (numNodes - 1); i++)
-        {
-          // printf("[%d]1111111\n", rank);
-          // allocate memory for this chunk
-          float *maxandminPerNode;
-          float *maxandminPerNode_recv; 
-          unsigned char *quantizedGradientsPerNode;
-          unsigned char *quantizedGradientsPerNode_recv;
+        //number of buckets per chunk * 2 floats
+        cudaMalloc(&maxandminPerNode, ceil(horovod_global.tensor_fusion_threshold / float(numNodes) / (512.0 * sizeof(float))) * 2 * sizeof(float));
+        cudaMalloc(&maxandminPerNode_recv, ceil(horovod_global.tensor_fusion_threshold / float(numNodes) / (512.0 * sizeof(float))) * 2 * sizeof(float));
+        cudaMalloc(&quantizedGradientsPerNode, ceil(horovod_global.tensor_fusion_threshold / float(numNodes) / 4.0));
+        cudaMalloc(&quantizedGradientsPerNode_recv, ceil(horovod_global.tensor_fusion_threshold / float(numNodes) / 4.0));
 
-          //number of buckets per chunk * 2 floats
-          cudaMallocManaged(&maxandminPerNode, ceil(horovod_global.tensor_fusion_threshold / numNodes / (512.0 * sizeof(float))) * 2 * sizeof(float));
-          cudaMallocManaged(&maxandminPerNode_recv, ceil(horovod_global.tensor_fusion_threshold / numNodes / (512.0 * sizeof(float))) * 2 * sizeof(float));
-          cudaMallocManaged(&quantizedGradientsPerNode, ceil(horovod_global.tensor_fusion_threshold / numNodes / 4.0));
-          cudaMallocManaged(&quantizedGradientsPerNode_recv, ceil(horovod_global.tensor_fusion_threshold / numNodes / 4.0));
-
-          maxandmin_send.push_back(maxandminPerNode); 
-          quantizedGradients.push_back(quantizedGradientsPerNode);
-          maxandmin_recv.push_back(maxandminPerNode_recv);
-          quantizedGradients_recv.push_back(quantizedGradientsPerNode_recv);
-        }
-
+        maxandmin_send.push_back(maxandminPerNode); 
+        quantizedGradients.push_back(quantizedGradientsPerNode);
+        maxandmin_recv.push_back(maxandminPerNode_recv);
+        quantizedGradients_recv.push_back(quantizedGradientsPerNode_recv);
       }
 
+    }
 
-      // Access the fusion buffer.
-      auto buffer_data =
-          horovod_global.tensor_fusion_buffers[first_entry.device]
-              ->AccessTensor(first_entry.context)
-              ->tensor_data()
-              .data();
 
-      // Copy tensor values into the fusion buffer.
-      ACTIVITY_START_ALL(entries, timeline, "MEMCPY_IN_FUSION_BUFFER")
-      size_t offset = 0;
-      for (auto it = entries.begin(); it != entries.end(); it++) {
-#if HAVE_CUDA
+    int num_elements_division = 0;
+    size_t num_elements = 0;
+    size_t num_bytes = 0;
+    for (auto it = entries.begin(); it != entries.end(); it++) 
+    {
+      num_elements += it->tensor.NumElements();
+      num_bytes += it->tensor.tensor_data().size();
+
+    }
+    int num_divisions = (int)ceil((double)num_bytes / (double)horovod_global.tensor_fusion_threshold);
+
+    auto buffer_data = (entries.size() > 1 || 
+      first_entry.tensor.tensor_data().size() <= horovod_global.tensor_fusion_threshold) ? horovod_global.tensor_fusion_buffers[first_entry.device]
+                ->AccessTensor(first_entry.context)
+                ->tensor_data()
+                .data() : first_entry.tensor.tensor_data().data();
+
+
+    for(int division = 0; division < num_divisions; division++)
+    {
+
+      if (entries.size() > 1 || first_entry.tensor.tensor_data().size() <= horovod_global.tensor_fusion_threshold)
+      {
+
+        // Copy memory into the fusion buffer.
+        ACTIVITY_START_ALL(entries, timeline, "MEMCPY_IN_FUSION_BUFFER")
+        size_t offset = 0;
+        for (auto it = entries.begin(); it != entries.end(); it++) {
+  #if HAVE_CUDA
+          if (on_gpu) {
+            CUDA_CHECK(
+                entries, "cudaMemcpyAsync",
+                cudaMemcpyAsync((void*)(buffer_data + offset),
+                                (const void*)it->tensor.tensor_data().data(),
+                                it->tensor.tensor_data().size(),
+                                cudaMemcpyDeviceToDevice,
+                                horovod_global.streams[first_entry.device]))
+          } else {
+  #endif
+            memcpy((void*)(buffer_data + offset),
+                   (const void*)it->tensor.tensor_data().data(),
+                   it->tensor.tensor_data().size());
+  #if HAVE_CUDA
+          }
+  #endif
+          offset += it->tensor.tensor_data().size();
+        }
+  #if HAVE_CUDA
         if (on_gpu) {
           CUDA_CHECK(
-              entries, "cudaMemcpyAsync",
-              cudaMemcpyAsync((void*)(buffer_data + offset),
-                              (const void*)it->tensor.tensor_data().data(),
-                              it->tensor.tensor_data().size(),
-                              cudaMemcpyDeviceToDevice,
-                              horovod_global.streams[first_entry.device]))
-        } else {
-#endif
-          memcpy((void*)(buffer_data + offset),
-                 (const void*)it->tensor.tensor_data().data(),
-                 it->tensor.tensor_data().size());
-#if HAVE_CUDA
+              entries, "cudaStreamSynchronize",
+              cudaStreamSynchronize(horovod_global.streams[first_entry.device]))
         }
-#endif
-        offset += it->tensor.tensor_data().size();
+  #endif
+        ACTIVITY_END_ALL(entries, timeline)
+        ACTIVITY_START_ALL(entries, timeline, "MPI_ALLREDUCE")
+
+        num_elements_division = num_elements;
+
       }
-#if HAVE_CUDA
-      if (on_gpu) {
-        CUDA_CHECK(
-            entries, "cudaStreamSynchronize",
-            cudaStreamSynchronize(horovod_global.streams[first_entry.device]))
-      }
-#endif
-      ACTIVITY_END_ALL(entries, timeline)
+      else
+      {
 
+        num_elements_division = (division == (num_divisions - 1)) ? 
+        (num_bytes % horovod_global.tensor_fusion_threshold) / 4 : horovod_global.tensor_fusion_threshold / 4;
 
-      ACTIVITY_START_ALL(entries, timeline, "MPI_ALLREDUCE")
-
-
-      //get number of elements in data buffer
-      size_t num_elements = 0;
-      for (auto it = entries.begin(); it != entries.end(); it++) {
-        num_elements += it->tensor.NumElements();
       }
 
-
+      int division_offset = division * (horovod_global.tensor_fusion_threshold / 4);
       //partition the data_buffer into #numNodes chunksls
-      int numElemsPerNode = num_elements / numNodes;
-      int residue = num_elements % numNodes;
+      int numElemsPerNode = num_elements_division / numNodes;
+      int residue = num_elements_division % numNodes;
       int startElem = (numElemsPerNode * rank) + std::min(residue, rank);
       int numElems = numElemsPerNode + ((rank < residue) ? 1 : 0);
       int numBuckets = ceil(numElemsPerNode / 512.0); // 512 is the size of a bucket
+
+
+      // printf("[%d]numElems:%d; numTensors:%d; division: %d\n", 
+      //   rank, (int)num_elements, (int)entries.size(), division);
 
 
       std::vector<MPI_Request> request_reduce;
@@ -1211,22 +1223,19 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
           int length = numElemsPerNode + ((i < residue) ? 1 : 0);
 
           request_reduce.push_back(MPI_Request());
-          MPI_Irecv(quantizedGradients_recv[counter1], numElems, MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD, &request_reduce.back());
+          MPI_Irecv(quantizedGradients_recv[counter1], numElems, MPI_UNSIGNED_CHAR, i, 0, 
+            MPI_COMM_WORLD, &request_reduce.back());
 
           request_reduce.push_back(MPI_Request());
           MPI_Irecv(maxandmin_recv[counter1], numBuckets * 2, dtype, i, 0, MPI_COMM_WORLD, &request_reduce.back());
-          // how many buckets in this chunk
-          // int numBucketsPerNode;
-          // if(numElemsPerNode%512 == 0 && residue!= 0) //chunks may have different number of buckets, but it is quite rare...
-          //   numBucketsPerNode = numBuckets + ((i < residue) ? 1 : 0);
-          // else 
-          //   numBucketsPerNode = numBuckets;
+
 
           cudaMemset(mutex_maxmin, 0, sizeof(int));
-          GPUFindMaxAndMin((float*)buffer_data + start_offset, maxandmin_send[counter1], length, horovod_global.streams[first_entry.device]);
+          GPUFindMaxAndMin((float*)buffer_data + division_offset + start_offset, maxandmin_send[counter1], 
+            length, horovod_global.streams[first_entry.device]);
 
 
-          GPUQuantizeValue(quantizedGradients[counter1], (float*)buffer_data + start_offset, 
+          GPUQuantizeValue(quantizedGradients[counter1], (float*)buffer_data + division_offset + start_offset, 
             maxandmin_send[counter1], length, cuda_states, horovod_global.streams[first_entry.device]);
           
 
@@ -1241,55 +1250,37 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
 
         }
       }
+      
 
       MPI_Waitall((int)request_reduce.size(), &request_reduce[0], MPI_STATUSES_IGNORE);
 
-      
       //dequantization and averaging
       for(int i = 0; i < (numNodes - 1); i++)
       {
-      
+     
         GPUDequantizeValue(quantizedGradients_recv[i], maxandmin_recv[i], 
           dequan_buffer, numElems, horovod_global.streams[first_entry.device]);
-          
+        
+        
         //add dequantized value to right place of data_buffer 
-        GPUAdd(numElems, dequan_buffer, (float*)buffer_data + startElem, horovod_global.streams[first_entry.device]); 
+        GPUAdd(numElems, dequan_buffer, (float*)buffer_data + division_offset + startElem, 
+          horovod_global.streams[first_entry.device]); 
       }
-      // GPUScale(numElems, (1.0 / numNodes), buffer_data + startElem, horovod_global.streams[first_entry.device]);
-
-
-
-      // long Dequantization1_end = GetTimeStamp();
-      // printf("activityType:Dequantization1=start_ts:%ld=duration:%ld=workerId:%d\n", 
-      //   Dequantization1_start, Dequantization1_end - Dequantization1_start, (int) rank);
-
-
-      // long Quantization2_start = GetTimeStamp();
-
-      //reuse the maxandmin_recv[0] and quantizedGradients_recv[0] as SEND buffer here
-
+      
       cudaMemset(mutex_maxmin, 0, sizeof(int));
-      GPUFindMaxAndMin((float*)buffer_data + startElem, maxandmin_recv[0], numElems, 
+      GPUFindMaxAndMin((float*)buffer_data + division_offset + startElem, maxandmin_recv[0], numElems, 
         horovod_global.streams[first_entry.device]);
 
-      GPUQuantizeValue(quantizedGradients_recv[0], (float*)buffer_data + startElem, 
+      GPUQuantizeValue(quantizedGradients_recv[0], (float*)buffer_data + division_offset + startElem, 
         maxandmin_recv[0], numElems, cuda_states, horovod_global.streams[first_entry.device]);
 
-     
-      // long Quantization2_end = GetTimeStamp();
-      // printf("activityType:Quantization2=start_ts:%ld=duration:%ld=workerId:%d\n", 
-      //   Quantization2_start, Quantization2_end - Quantization2_start, (int) rank);
 
-
-      // long MPIexchange2_start = GetTimeStamp();
-      //gather averaged chunks
       int counter2 = 0;
       std::vector<MPI_Request> request_gather;
       for(int i = 0; i < numNodes; i++)
       {
         if (i != rank)
         {
-
           request_gather.push_back(MPI_Request());
           MPI_Irecv(quantizedGradients[counter2], numElemsPerNode + ((i < residue) ? 1 : 0), 
             MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD, &request_gather.back());
@@ -1309,8 +1300,6 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
 
       MPI_Waitall((int)request_gather.size(), &request_gather[0], MPI_STATUSES_IGNORE);
 
-
-
       //dequantization
       int counter3 = 0;
       for(int i = 0; i < numNodes; i++)
@@ -1320,108 +1309,63 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
 
           int start_offset = (numElemsPerNode * i) + std::min(residue, i);
           int length = numElemsPerNode + ((i < residue) ? 1 : 0);
-      
+
+          //dequantize chunk from node i in dequan_buffer     
           GPUDequantizeValue(quantizedGradients[counter3], maxandmin_send[counter3], 
             dequan_buffer, length, horovod_global.streams[first_entry.device]);
           
-
           //copy averaged dequantized data to right place of data_buffer
-          GPUCopyValue((float*)buffer_data + start_offset, dequan_buffer, length, 
+          GPUCopyValue((float*)buffer_data + division_offset + start_offset, dequan_buffer, length, 
             horovod_global.streams[first_entry.device]);
           counter3++;
         }   
       }
 
+      if (entries.size() > 1 || first_entry.tensor.tensor_data().size() <= horovod_global.tensor_fusion_threshold)
+      {
 
-
-
-      // MPI_CHECK(entries, "MPI_Allreduce",
-      //           MPI_Allreduce(MPI_IN_PLACE, (void*)buffer_data,
-      //                         (int)num_elements, dtype, MPI_SUM,
-      //                         MPI_COMM_WORLD))
-      // ACTIVITY_END_ALL(entries, timeline)
-
-
-      ACTIVITY_START_ALL(entries, timeline, "MEMCPY_OUT_FUSION_BUFFER")
-      offset = 0;
-      for (auto it = entries.begin(); it != entries.end(); it++) {
-#if HAVE_CUDA
+        ACTIVITY_START_ALL(entries, timeline, "MEMCPY_OUT_FUSION_BUFFER")
+        size_t offset = 0;
+        for (auto it = entries.begin(); it != entries.end(); it++) {
+  #if HAVE_CUDA
+          if (on_gpu) {
+            CUDA_CHECK(
+                entries, "cudaMemcpyAsync",
+                cudaMemcpyAsync((void*)it->output->tensor_data().data(),
+                                (const void*)(buffer_data + offset),
+                                it->tensor.tensor_data().size(),
+                                cudaMemcpyDeviceToDevice,
+                                horovod_global.streams[first_entry.device]))
+          } else {
+  #endif
+            memcpy((void*)it->output->tensor_data().data(),
+                   (const void*)(buffer_data + offset),
+                   it->tensor.tensor_data().size());
+  #if HAVE_CUDA
+          }
+  #endif
+          offset += it->tensor.tensor_data().size();
+        }
+  #if HAVE_CUDA
         if (on_gpu) {
           CUDA_CHECK(
-              entries, "cudaMemcpyAsync",
-              cudaMemcpyAsync((void*)it->output->tensor_data().data(),
-                              (const void*)(buffer_data + offset),
-                              it->tensor.tensor_data().size(),
-                              cudaMemcpyDeviceToDevice,
-                              horovod_global.streams[first_entry.device]))
-        } else {
-#endif
-          memcpy((void*)it->output->tensor_data().data(),
-                 (const void*)(buffer_data + offset),
-                 it->tensor.tensor_data().size());
-#if HAVE_CUDA
+              entries, "cudaStreamSynchronize",
+              cudaStreamSynchronize(horovod_global.streams[first_entry.device]))
         }
-#endif
-        offset += it->tensor.tensor_data().size();
+  #endif
+        ACTIVITY_END_ALL(entries, timeline)
       }
-#if HAVE_CUDA
-      if (on_gpu) {
-        CUDA_CHECK(
-            entries, "cudaStreamSynchronize",
-            cudaStreamSynchronize(horovod_global.streams[first_entry.device]))
-      }
-#endif
-      ACTIVITY_END_ALL(entries, timeline)
 
-    
-    //free memory!
-    // cudaFree(buffer_data);
+    }
 
-    // printf("[%d]777\n", rank);
-
-    // cudaFree(dequan_buffer);
-    // cudaFree(mutex);
-
-    // for(int i = 0; i < (numNodes - 1); i++)
-    // {
-    //   cudaFree(maxandmin_send[i]);
-    //   cudaFree(maxandmin_recv[i]);
-    //   cudaFree(quantizedGradients[i]);
-    //   cudaFree(quantizedGradients_recv[i]);
-    // }
-
-    // } 
-
-
-
-
-
-    // else {//entry=1
-
-    //   printf("hhh\n");
-    //   auto e = first_entry;
-    //   ACTIVITY_START_ALL(entries, timeline, "MPI_ALLREDUCE")
-    //   MPI_CHECK(entries, "MPI_Allreduce",
-    //             MPI_Allreduce((const void*)e.tensor.tensor_data().data(),
-    //                           (void*)e.output->tensor_data().data(),
-    //                           (int)e.tensor.NumElements(), dtype, MPI_SUM,
-    //                           MPI_COMM_WORLD))
-    //   ACTIVITY_END_ALL(entries, timeline)
-    // }
-
-    for (auto it = entries.begin(); it != entries.end(); it++) {
+    for (auto it = entries.begin(); it != entries.end(); it++) 
+    {
       timeline.End(it->tensor_name, it->output);
       it->callback(Status::OK());
     }
 
 
   } 
-
-
-
-
-
-
 
   else if (response.response_type() == MPIResponse::BROADCAST) {//sd_broadcast
 
@@ -2254,3 +2198,5 @@ Output
 } // namespace tensorflow
 } // namespace horovod
 // #endif
+
+
