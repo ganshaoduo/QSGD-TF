@@ -1,36 +1,17 @@
 
-// #if GOOGLE_CUDA
+
 #define EIGEN_USE_GPU
-// #define EIGEN_USE_THREADS
-
-// #if HAVE_CUDA
-// #include "tensorflow/stream_executor/stream.h"
-// #include <cuda_runtime.h>
-// #endif
-
-// #define OMPI_SKIP_MPICXX
 
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <curand_kernel.h>
 #include <curand.h>
-// #include "mpi_message.h"
-
 #include "mpi_cuda.h"
-// #include "tensorflow/core/util/cuda_kernel_helper.h"
 
-// using namespace tensorflow;
-// using GPUDevice = Eigen::GpuDevice;
-// namespace horovod {
-// namespace tensorflow {
-// namespace {
 
 #define maxThreadsPerBlock 1024
-	// void GPUScaleAndAdd(int n, float scale1, float *x, float scale2, float *y);
 
-	// void ScaleAndAdd(int n, float scale1, float *x, float scale2, float *y);
 
-	// template <typename T>
 __global__ void _scaleAndAdd(int n, float scale1, float *x, float scale2, float *y)
 {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -82,7 +63,6 @@ __global__ void _findMaxAndMin2(float *array, float *max, float *min, int *mutex
     cache2[threadIdx.x] = temp2;
 
     __syncthreads();
-
 
     // reduction
     unsigned int i = blockDim.x/2;
@@ -183,21 +163,9 @@ __global__ void _quantizeValue(unsigned char *x, const float *y, const float *ma
     for (int i = index; i < n; i += stride)
     {
         int my_bucket = i / 512;
-
         float unit = (maxandmin[my_bucket * 2] - maxandmin[my_bucket * 2 + 1]) / 255.0;
-
         float d = (y[i] - maxandmin[my_bucket * 2 + 1]) / unit + (curand(&local_state)%1000001 / 1000000.0); 
-        // float d = (y[i] - maxandmin[my_bucket * 2 + 1]) / unit; 
-        // float prob = d - int(d);
-        // unsigned char c;
-
-        // if (curand(&local_state)%1000001 / 1000000.0 < prob)
-        //     c = (unsigned char)(int(d) + 1);
-        // else
-        //     c = (unsigned char)(int(d));
-
         x[i] = (unsigned char) floor(d);
-        // x[i] = c;
     }
     states[index] = local_state;       
 }
@@ -210,14 +178,11 @@ __global__ void _dequantizeValue(unsigned char *recv, float *maxandmin, float *x
     unsigned int index = threadIdx.x + blockIdx.x * blockDim.x;
     unsigned int stride = gridDim.x * blockDim.x;
 
-    // float unit = (maxandmin[0] - maxandmin[1]) / 255.0; 
-
     for (int i = index; i < n; i += stride)
     {
         int my_bucket = i / 512;
         float unit = (maxandmin[my_bucket * 2] - maxandmin[my_bucket * 2 + 1]) / 255.0;
-        x[i] = maxandmin[my_bucket * 2 + 1] + recv[i] * unit;
-        
+        x[i] = maxandmin[my_bucket * 2 + 1] + recv[i] * unit;  
     }          
 }
 
@@ -232,15 +197,8 @@ __global__ void _copyValue(float* x, const float* y, const int n)
 
 
 
-
-
-
-
-// template <typename T>
-// extern "C"
 void GPUScaleAndAdd(int n, float scale1, float *x, float scale2, float *y, cudaStream_t stream)
 {
-	// auto stream = CudaStreamForMPI();
     int blocksPerGrid = (int) ceil(1.0 * n / maxThreadsPerBlock);
     _scaleAndAdd<<<blocksPerGrid, maxThreadsPerBlock, 0, stream>>>(n, scale1, x, scale2, y);
     cudaStreamSynchronize(stream);	    
@@ -248,7 +206,6 @@ void GPUScaleAndAdd(int n, float scale1, float *x, float scale2, float *y, cudaS
 
 void GPUScale(int n, float scaler, float *x, cudaStream_t stream)
 {
-	// auto stream = CudaStreamForMPI();
     int blocksPerGrid = (int) ceil(1.0 * n / maxThreadsPerBlock);
     _scale<<<blocksPerGrid, maxThreadsPerBlock, 0, stream>>>(n, scaler, x);
     cudaStreamSynchronize(stream);	    
@@ -256,7 +213,6 @@ void GPUScale(int n, float scaler, float *x, cudaStream_t stream)
 
 void GPUAdd(int n, float *x, float *y, cudaStream_t stream)
 {
-	// auto stream = CudaStreamForMPI();
     int blocksPerGrid = (int) ceil(1.0 * n / maxThreadsPerBlock);
     _add<<<blocksPerGrid, maxThreadsPerBlock, 0, stream>>>(n, x, y);
     cudaStreamSynchronize(stream);	    
@@ -267,8 +223,7 @@ void GPUFindMaxAndMin(float *array, float *maxandmin, int n, cudaStream_t stream
 {
     int blocksPerGrid = (int) ceil(1.0 * n / maxThreadsPerBlock);
     _findMaxAndMin<<<blocksPerGrid, maxThreadsPerBlock, 0, stream>>>(array, maxandmin, n);
-    cudaStreamSynchronize(stream);
-    
+    cudaStreamSynchronize(stream); 
 }
 
 void GPUFindMaxAndMin2(float *array, float *max, float *min, int *mutex, int n, cudaStream_t stream)
@@ -315,26 +270,3 @@ void GPUCopyValue(float* x, float* y, int n, cudaStream_t stream)
     cudaStreamSynchronize(stream);
     
 } 
-
-
-	// template void GPUscaleAndAdd<GPUDevice, float>;
-	// template void GPUscaleAndAdd<GPUDevice, int32>;
-
-	// void main()
-	// {
-	// 	float *a, *b;
-	// 	cudaMalloc(&a, 50*sizeof(float));
-	// 	cudaMalloc(&b, 50*sizeof(float));
-	// 	cudaMemset(a, 1.0, 50*sizeof(float));
-	// 	cudaMemset(a, 2.0, 50*sizeof(float));
-
-	// 	cudaStream_t stream_executor;
-
-	// 	GPUScaleAndAdd(50, 1.0, a, 2.0, b, stream_executor);
-
-	// }
-
-// }
-// }
-// }
-// #endif
