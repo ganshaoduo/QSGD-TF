@@ -292,12 +292,8 @@ def customize_compiler_for_nvcc(self):
             # use only a subset of the extra_postargs, which are 1-1 translated
             # from the extra_compile_args in the Extension class
             postargs = extra_postargs['nvcc']
-            # postargs = extra_postargs.append('nvcc')
         else:
-            #self.set_executable('compiler_so', ['/usr/local/mpi/bin/mpicc'])
             postargs = extra_postargs['gcc']
-            # postargs = extra_postargs.append('gcc')
-
         super(obj, src, ext, cc_args, postargs, pp_opts)
         # reset the default compiler_so, which we might have changed for cuda
         self.compiler_so = default_compiler_so
@@ -349,7 +345,6 @@ def fully_define_extension(build_ext):
                'horovod/tensorflow/mpi_ops.cc',
                'horovod/tensorflow/timeline.cc',
                'horovod/tensorflow/mpi_ops_gpu.cu.cc']
-    # COMPILE_FLAGS = ['-std=c++11', '-fPIC', '-O2'] + shlex.split(mpi_flags) + tf_compile_flags
 
     COMPILE_FLAGS = {'gcc': ['-std=c++11', '-fPIC', '-O2', '-D GOOGLE_CUDA=1'] + shlex.split(mpi_flags) + tf_compile_flags,
                      'nvcc': ['-c', '-std=c++11', '-x=cu', '-arch=sm_37',
