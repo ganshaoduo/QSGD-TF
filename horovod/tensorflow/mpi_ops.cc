@@ -104,12 +104,10 @@ namespace {
 
 
 
-
-// float *buffer_data;
+//declare global variants
 float *dequan_buffer;
 int *mutex_maxmin;
 curandState* cuda_states;
-
 std::vector<float*> maxandmin_send;
 std::vector<float*> maxandmin_recv;
 std::vector<unsigned char*> quantizedGradients;
@@ -205,10 +203,6 @@ struct HorovodGlobalState {
   // Memory buffers for Tensor Fusion.  They are keyed off device ID, and all
   // are allocated tensor_fusion_threshold bytes if initialized.
   std::unordered_map<int, PersistentTensor*> tensor_fusion_buffers;
-
-  //for quantization
-  // float *fusion_buffers;
-
 
   // Whether MPI_Init has been completed on the background thread.
   bool initialization_done = false;
@@ -566,7 +560,13 @@ Status GetNCCLDataType(const Tensor tensor, ncclDataType_t* dtype) {
   case DT_DOUBLE:
     *dtype = ncclFloat64;
     return Status::OK();
-  default:
+  default:    // printf("on_gpu : %s\n", first_entry.device != CPU_DEVICE_ID ? "true" : "false");
+863
+    // printf("11111111111\n");
+864
+​
+865
+    // printf("ddd\n");
     // This is not reachable normally since we specify acceptable
     // data types in Op definition.
     return errors::Internal("Invalid tensor type.");
@@ -681,8 +681,6 @@ cudaError_t ReleaseCudaEvent(cudaEvent_t event) {
 // raising an error.
 void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
 
-  // printf("aaa\n");
-
   std::vector<TensorTableEntry> entries;
   {
     // Lock on the tensor table.
@@ -712,8 +710,6 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
   for (auto it = entries.begin(); it != entries.end(); it++) {
     timeline.Start(it->tensor_name, response.response_type());
   }
-
-
 
   if (entries.size() > 1) {
     auto first_entry = entries[0];
@@ -750,8 +746,6 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
     }
   }
 
-  // printf("bbb\n");
-
 #if HAVE_CUDA
   // On GPU data readiness is signalled by ready_event.
   std::vector<TensorTableEntry> waiting_tensors;
@@ -780,8 +774,6 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
     }
   }
 #endif
-
-  // printf("ccc\n");
 
   //sd_allgather
   Status status;
@@ -871,10 +863,6 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
     
     auto first_entry = entries[0];
 
-    // printf("on_gpu : %s\n", first_entry.device != CPU_DEVICE_ID ? "true" : "false");
-    // printf("11111111111\n");
-
-    // printf("ddd\n");
 
 #if HAVE_CUDA
     bool on_gpu = first_entry.device != CPU_DEVICE_ID; 
@@ -888,7 +876,6 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
       }
     }
 #endif
-
 
 
 
@@ -1074,7 +1061,6 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
 //     }
 // #endif
 
-    // printf("eee\n");
 
     MPI_Datatype dtype;
     status = GetMPIDataType(first_entry.tensor, &dtype);
@@ -1097,33 +1083,32 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
     size_t num_elements = 0;
     size_t num_bytes = 0;
 
-    // int *mutex_maxmin;
+    //allocate memory only once
     if(mutex_maxmin == nullptr)
       cudaMalloc(&mutex_maxmin, sizeof(int));
 
-    // float *dequan_buffer;
     if(dequan_buffer == nullptr)
       cudaMalloc(&dequan_buffer, ceil(horovod_global.tensor_fusion_threshold / numNodes)); //size of dequan buffer is the max size for one chunk
 
     if(cuda_states == nullptr)
       cuda_states = GPUInit_curand(ceil(horovod_global.tensor_fusion_threshold / numNodes / sizeof(float)), time(NULL), horovod_global.streams[first_entry.device]);
 
-
     if(quantizedGradients.size() != (numNodes - 1))
     {
 
       for(int i = 0; i < (numNodes - 1); i++)
       {
-        // printf("[%d]1111111\n", rank);
-        // allocate memory for this chunk
+        // allocate memory for this chunk. We partition the entire gradients into N chunks, where N is the number of MPI nodes.
         float *maxandminPerNode;
         float *maxandminPerNode_recv; 
         unsigned char *quantizedGradientsPerNode;
         unsigned char *quantizedGradientsPerNode_recv;
 
-        //number of buckets per chunk * 2 floats
+        //calculate how many buckets in each chunk. Then each bucket has 2 float values: maximum and minimum.
         cudaMalloc(&maxandminPerNode, ceil(horovod_global.tensor_fusion_threshold / float(numNodes) / (bucket_size * sizeof(float))) * 2 * sizeof(float));
         cudaMalloc(&maxandminPerNode_recv, ceil(horovod_global.tensor_fusion_threshold / float(numNodes) / (bucket_size * sizeof(float))) * 2 * sizeof(float));
+        
+        //We quantize values from 32 bits to 8 bits, so the size of quantized chunk is 1/4 of full precision chunk.
         cudaMalloc(&quantizedGradientsPerNode, ceil(horovod_global.tensor_fusion_threshold / float(numNodes) / 4.0));
         cudaMalloc(&quantizedGradientsPerNode_recv, ceil(horovod_global.tensor_fusion_threshold / float(numNodes) / 4.0));
 
@@ -1135,15 +1120,17 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
 
     }
 
-
+    //get the total number and size of gradients
     for (auto it = entries.begin(); it != entries.end(); it++) 
     {
       num_elements += it->tensor.NumElements();
       num_bytes += it->tensor.tensor_data().size();
-
     }
+      
+    //If gradient tensor is bigger than buffer threshold, then divide it.
     int num_divisions = (int)ceil((double)num_bytes / (double)horovod_global.tensor_fusion_threshold);
-
+    
+    //if there is only one big tensor, do not need to copy it into fusion buffer.
     auto buffer_data = (entries.size() > 1 || 
       first_entry.tensor.tensor_data().size() <= horovod_global.tensor_fusion_threshold) ? horovod_global.tensor_fusion_buffers[first_entry.device]
                 ->AccessTensor(first_entry.context)
@@ -1200,19 +1187,17 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
         (num_bytes % horovod_global.tensor_fusion_threshold) / sizeof(float) : horovod_global.tensor_fusion_threshold / sizeof(float);
 
       }
-
+        
+        
       int division_offset = division * (horovod_global.tensor_fusion_threshold / sizeof(float));
-      //partition the data_buffer into #numNodes chunksls
+      //partition the data_buffer into chunks
       int numElemsPerNode = num_elements_division / numNodes;
       int residue = num_elements_division % numNodes;
       int startElem = (numElemsPerNode * rank) + std::min(residue, rank);
       int numElems = numElemsPerNode + ((rank < residue) ? 1 : 0);
       int numBuckets = ceil(numElemsPerNode / (double)bucket_size); 
 
-      // printf("[%d]numElems:%d; numTensors:%d; division: %d\n", 
-      //   rank, (int)num_elements, (int)entries.size(), division);
-
-
+      //first round of MPI communication
       std::vector<MPI_Request> request_reduce;
       int counter1 = 0;
       for(int i = 0; i < numNodes; i++)
@@ -1230,16 +1215,15 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
           request_reduce.push_back(MPI_Request());
           MPI_Irecv(maxandmin_recv[counter1], numBuckets * 2, dtype, i, 0, MPI_COMM_WORLD, &request_reduce.back());
 
-
+          //find max and min of this chunk
           cudaMemset(mutex_maxmin, 0, sizeof(int));
           GPUFindMaxAndMin((float*)buffer_data + division_offset + start_offset, maxandmin_send[counter1], 
             length, horovod_global.streams[first_entry.device]);
-
-
+          
+          //quantize this chunk
           GPUQuantizeValue(quantizedGradients[counter1], (float*)buffer_data + division_offset + start_offset, 
             maxandmin_send[counter1], length, cuda_states, horovod_global.streams[first_entry.device]);
           
-
           request_reduce.push_back(MPI_Request());
           MPI_Isend(quantizedGradients[counter1], numElemsPerNode + ((i < residue) ? 1 : 0), 
             MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD, &request_reduce.back());
@@ -1252,22 +1236,21 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
         }
       }
       
-
       MPI_Waitall((int)request_reduce.size(), &request_reduce[0], MPI_STATUSES_IGNORE);
 
-      //dequantization and averaging
+      
       for(int i = 0; i < (numNodes - 1); i++)
       {
-     
+        //dequantization
         GPUDequantizeValue(quantizedGradients_recv[i], maxandmin_recv[i], 
           dequan_buffer, numElems, horovod_global.streams[first_entry.device]);
-        
         
         //add dequantized value to right place of data_buffer 
         GPUAdd(numElems, dequan_buffer, (float*)buffer_data + division_offset + startElem, 
           horovod_global.streams[first_entry.device]); 
       }
       
+      //quantize aggregated value  
       cudaMemset(mutex_maxmin, 0, sizeof(int));
       GPUFindMaxAndMin((float*)buffer_data + division_offset + startElem, maxandmin_recv[0], numElems, 
         horovod_global.streams[first_entry.device]);
@@ -1275,7 +1258,7 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
       GPUQuantizeValue(quantizedGradients_recv[0], (float*)buffer_data + division_offset + startElem, 
         maxandmin_recv[0], numElems, cuda_states, horovod_global.streams[first_entry.device]);
 
-
+      //second round of MPI communication
       int counter2 = 0;
       std::vector<MPI_Request> request_gather;
       for(int i = 0; i < numNodes; i++)
@@ -1315,13 +1298,14 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
           GPUDequantizeValue(quantizedGradients[counter3], maxandmin_send[counter3], 
             dequan_buffer, length, horovod_global.streams[first_entry.device]);
           
-          //copy averaged dequantized data to right place of data_buffer
+          //copy dequantized data to right place of data_buffer
           GPUCopyValue((float*)buffer_data + division_offset + start_offset, dequan_buffer, length, 
             horovod_global.streams[first_entry.device]);
           counter3++;
         }   
       }
 
+      //if there are many small tensors, copy tensors back from fusion buffer.
       if (entries.size() > 1 || first_entry.tensor.tensor_data().size() <= horovod_global.tensor_fusion_threshold)
       {
 
@@ -1370,7 +1354,6 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
 
   else if (response.response_type() == MPIResponse::BROADCAST) {//sd_broadcast
 
-    // printf("Entering BROADCAST\n");
 
     assert(entries.size() == 1);
     auto e = entries[0];
