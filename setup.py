@@ -139,7 +139,7 @@ def get_tf_flags(build_ext):
 
 
 def get_mpi_flags():
-    show_command = os.environ.get('HOROVOD_MPICXX_SHOW', '/usr/local/mpi/bin/mpicxx -show')
+    show_command = os.environ.get('HOROVOD_MPICXX_SHOW', 'mpicxx -show')
     try:
         mpi_show_output = subprocess.check_output(
             shlex.split(show_command), universal_newlines=True).strip()
@@ -199,8 +199,8 @@ def get_cuda_dirs(build_ext):
 
     if not cuda_include_dirs and not cuda_lib_dirs:
         # default to /usr/local/cuda
-        cuda_include_dirs += ['/usr/local/cuda-8.0/include']
-        cuda_lib_dirs += ['/usr/local/cuda-8.0/lib64']
+        cuda_include_dirs += ['/usr/local/cuda/include']
+        cuda_lib_dirs += ['/usr/local/cuda/lib64']
 
     try:
         test_compile(build_ext, 'test_cuda', libraries=['cudart'], include_dirs=cuda_include_dirs,
@@ -369,7 +369,7 @@ def fully_define_extension(build_ext):
         INCLUDES += cuda_include_dirs
         LIBRARY_DIRS += cuda_lib_dirs
         LIBRARIES += ['cudart']
-        RUNTIME_LIBRARY_DIRS += ['/usr/local/cuda-8.0/lib64']
+        RUNTIME_LIBRARY_DIRS += ['/usr/local/cuda/lib64']
 
     if have_nccl:
         MACROS += [('HAVE_NCCL', '1')]
