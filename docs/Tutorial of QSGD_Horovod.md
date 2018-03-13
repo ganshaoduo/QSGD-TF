@@ -17,7 +17,7 @@ This tutorial demonstrates how to install and use QSGD-Horovod in the distribute
     ```
     Here we do not need NCCL flag as Horovod dose. Horovod uses NCCL to do collective communications like Allreduce or Broadcast, but we just use basic MPI operations. 
     
-## Usage of QSGD-Horovod
+### Usage of QSGD-Horovod
 
 To use Horovod, make the following additions to your program:
 
@@ -35,7 +35,7 @@ To use Horovod, make the following additions to your program:
 
 You can find full training examples in the project: `/QSGD_Horovod/examples`.
 
-## Running QSGD-Horovod
+### Running QSGD-Horovod
 The examples below are for Open MPI. Check your MPI documentation for arguments to the `mpirun` command on your system.
 
 Typically one GPU will be allocated per process, so if a server has 4 GPUs, you would run 4 processes. In Open MPI, the number of processes is specified with the `-np` flag.
