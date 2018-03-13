@@ -1082,16 +1082,17 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
     int num_elements_division = 0;
     size_t num_elements = 0;
     size_t num_bytes = 0;
+    size_t chunk_size = (size_t)ceil((double)horovod_global.tensor_fusion_threshold / (double)numNodes);
 
     //allocate memory only once
     if(mutex_maxmin == nullptr)
       cudaMalloc(&mutex_maxmin, sizeof(int));
 
     if(dequan_buffer == nullptr)
-      cudaMalloc(&dequan_buffer, ceil(horovod_global.tensor_fusion_threshold / numNodes)); //size of dequan buffer is the max size for one chunk
+      cudaMalloc(&dequan_buffer, chunk_size); //size of dequan buffer is the max size for one chunk
 
     if(cuda_states == nullptr)
-      cuda_states = GPUInit_curand(ceil(horovod_global.tensor_fusion_threshold / numNodes / sizeof(float)), time(NULL), horovod_global.streams[first_entry.device]);
+      cuda_states = GPUInit_curand(ceil((double)chunk_size / sizeof(float)), time(NULL), horovod_global.streams[first_entry.device]);
 
     if(quantizedGradients.size() != (numNodes - 1))
     {
@@ -1105,12 +1106,12 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
         unsigned char *quantizedGradientsPerNode_recv;
 
         //calculate how many buckets in each chunk. Then each bucket has 2 float values: maximum and minimum.
-        cudaMalloc(&maxandminPerNode, ceil(horovod_global.tensor_fusion_threshold / float(numNodes) / (bucket_size * sizeof(float))) * 2 * sizeof(float));
-        cudaMalloc(&maxandminPerNode_recv, ceil(horovod_global.tensor_fusion_threshold / float(numNodes) / (bucket_size * sizeof(float))) * 2 * sizeof(float));
+        cudaMalloc(&maxandminPerNode, ceil((double)chunk_size / (bucket_size * sizeof(float))) * 2 * sizeof(float));
+        cudaMalloc(&maxandminPerNode_recv, ceil((double)chunk_size / (bucket_size * sizeof(float))) * 2 * sizeof(float));
         
         //We quantize values from 32 bits to 8 bits, so the size of quantized chunk is 1/4 of full precision chunk.
-        cudaMalloc(&quantizedGradientsPerNode, ceil(horovod_global.tensor_fusion_threshold / float(numNodes) / 4.0));
-        cudaMalloc(&quantizedGradientsPerNode_recv, ceil(horovod_global.tensor_fusion_threshold / float(numNodes) / 4.0));
+        cudaMalloc(&quantizedGradientsPerNode, ceil((double)chunk_size / 4.0));
+        cudaMalloc(&quantizedGradientsPerNode_recv, ceil((double)chunk_size / 4.0));
 
         maxandmin_send.push_back(maxandminPerNode); 
         quantizedGradients.push_back(quantizedGradientsPerNode);
