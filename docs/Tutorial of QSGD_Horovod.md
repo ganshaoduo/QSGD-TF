@@ -1,5 +1,6 @@
 # Setup QSGD-Horovod on Linux
 This tutorial demonstrates how to install and use QSGD-Horovod in the distributed cluster. [Horovod](https://github.com/uber/horovod) is a distributed training framework for TensorFlow. It adopts data parallelism and MPI communication to scale Tensorflow in clusters  more efficiently than original distributed Tensorflow did. In this project, we have implemented Quantized-SGD based on Horovod in order to further reduce the distributed training time.
+![128-GPU Benchmark](horovod/docs/benchmark.pdf)
 
 ### Precondition 
 1. If you use GPU cluster, you should install [CUDA](http://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html) first.
