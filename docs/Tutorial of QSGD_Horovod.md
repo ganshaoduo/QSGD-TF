@@ -1,7 +1,7 @@
 # Setup QSGD-Horovod on Linux
 This tutorial demonstrates how to install and use QSGD-Horovod in the distributed cluster. [Horovod](https://github.com/uber/horovod) is a distributed training framework for TensorFlow. It adopts data parallelism and MPI communication to scale Tensorflow in clusters  more efficiently than original distributed Tensorflow did. In this project, we have implemented Quantized-SGD based on Horovod in order to further reduce the distributed training time.
 
-Below is a chart representing the benchmark that was done on 32 Amazon EC2 p2.xlarge instances with 1 NVIDIA K80 GPU each. We have trained four popular CNN models on Imagenet and compared them with original Horovod implementation:
+Below is a figure representing the benchmark that was done on 32 Amazon EC2 p2.xlarge instances with 1 NVIDIA K80 GPU each. We have trained four popular CNN models on Imagenet and compared them with original Horovod implementation. The figure shows the epoch time on 8, 16, 32 GPUs, for full 32-bit precision of Tensorflow versus QSGD 8-bit. Epoch time is broken down into communication (bottom solid color) and computation (top transparent color):
 
 ![Results](Results.png)
 
