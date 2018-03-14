@@ -1,7 +1,7 @@
 # Setup QSGD-Horovod on Linux
 This tutorial demonstrates how to install and use QSGD-Horovod in the distributed cluster. [Horovod](https://github.com/uber/horovod) is a distributed training framework for TensorFlow. It adopts data parallelism and MPI communication to scale Tensorflow in clusters  more efficiently than original distributed Tensorflow did. In this project, we have implemented Quantized-SGD based on Horovod in order to further reduce the distributed training time.
 
-Below is a figure representing the benchmark that was done on 32 Amazon EC2 p2.xlarge instances with 1 NVIDIA K80 GPU each. We have trained four popular CNN models on Imagenet and compared them with original Horovod implementation. The figure shows the epoch time on 8, 16, 32 GPUs, for full 32-bit precision of Tensorflow versus QSGD 8-bit. Epoch time is broken down into communication (bottom solid color) and computation (top transparent color):
+Below is a figure representing the benchmark that was done on 32 Amazon EC2 p2.xlarge instances with 1 NVIDIA K80 GPU each. We have trained four popular CNN models on Imagenet and compared them with original Horovod implementation. The figure shows epoch time on 8, 16, 32 GPUs, for full 32-bit precision of Tensorflow versus QSGD 8-bit. Epoch time is broken down into communication (bottom solid color) and computation (top transparent color):
 
 ![Results](Results.png)
 
@@ -12,7 +12,7 @@ Below is a figure representing the benchmark that was done on 32 Amazon EC2 p2.x
  **Attention :** For GPU cluster, you should make sure your MPI is compiled with **cuda-aware**, which can support the GPU communication with MPI. You can get more details of cuda-aware OpenMPI [here](https://www.open-mpi.org/faq/?category=buildcuda). You can use following command to see if your MPI was built with CUDA-aware support.
     ```sh
     $ ompi_info --parsable --all | grep mpi_built_with_cuda_support:value
-    $ mca:mpi:base:param:mpi\_built\_with\_cuda\_support:value:true
+    $ mca:mpi:base:param:mpi_built_with_cuda_support:value:true
     ```
 ### Compile QSGD-Horovod 
  1. Compile QSGD-Horovod with `pip`: (This `pip` should be in the same python environment as your Tensorflow.)
