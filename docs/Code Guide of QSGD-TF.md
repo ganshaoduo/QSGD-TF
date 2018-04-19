@@ -11,7 +11,7 @@ There are two main changes we did to Horovod:
 
 2. **Quantization**
 
-    In this implementation we quantized the gradients number from 32-bit `float` to 8-bit `unsigned char` to communicate. The quantization algorithm can be described as follows (it is implemented in function `GPUQuantizeValue` and `GPUDequantizeValue`):
+    In this implementation we quantized the gradients number from 32-bit `float` to 8-bit `unsigned char` to communicate. The quantization algorithm can be described as follows (it is implemented in function `GPUQuantizeValue` and `GPUDequantizeValue` in file `mpi_ops_gpu.cu.cc`):
     - Imagine there is a list `L` of 32-bit numbers we want quantize. We first find out the `maximum` and `minimum` number of list `L` (using `GPUFindMaxAndMin` function). Then we partition the interval between `maximum` and `minimum` into `255` parts (because we use 8 bits to represent each number). Then each number in list `L` falls into one specific part between two integer numbers.
     - Our aim is to use one integer number between 0 to 255 to represent each number in list `L`. So we apply stochastic rounding to choose one integer number between these two.
     - To dequantize the received list, we also need the `maximum` and `minimum` number of this list, so only these two numbers should be sent in full precision. Then we can get the `unit` length of this list as : `(max - min) / 255`. For each received number `L[i]`, the dequantized value should be : `min + L[i] * unit`.
