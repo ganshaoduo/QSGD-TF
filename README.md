@@ -3,7 +3,7 @@ This tutorial demonstrates how to install and use QSGD-TF in the distributed clu
 
 Below is a figure representing the benchmark that was done on 32 Amazon EC2 p2.xlarge instances with 1 NVIDIA K80 GPU each. We have trained four popular CNN models on Imagenet and compared them with original Horovod implementation. The figure shows epoch time on 8, 16, 32 GPUs, for full 32-bit precision of Tensorflow versus QSGD 8-bit. Epoch time is broken down into communication (bottom solid color) and computation (top transparent color):
 
-![Results](Results.png)
+![Results](QSGD-TF/docs/Results.png)
 
 ### Precondition 
 1. If you use GPU cluster, you should install [CUDA](http://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html) first.
