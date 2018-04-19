@@ -1,6 +1,7 @@
 # Code Guide of QSGD-TF
 
-This is a code guide of our implementation of QSGD-TF. Based on [Horovod](https://github.com/uber/horovod), we introduce QSGD method to quantize the gradients and obviously reduce the communication time cost in multi-node training. There are two main changes we did to Horovod:
+This is a code guide of our implementation of QSGD-TF. Based on [Horovod](https://github.com/uber/horovod), we introduce QSGD method to quantize the gradients and obviously reduce the communication time cost in multi-node training. 
+There are two main changes we did to Horovod:
 1. Communication 
     In every batch, each node gets training data and calculates gradients, which are stored in tensors. Originally, Horovod uses `ncclAllReduce` (if supported) or `MPI_AllReduce` to aggregate tensors from all nodes with full precision. Whereas in QSGD-TF, we removed the `ncclAllReduce` and `MPI_AllReduce`, and redesigned the communication pattern as two rounds:
     - In first round, we get tensors to be exchanged from Horovod directly and take them as one big vector. Let's say we have `n` nodes in cluster. Then we partition this vector into `n` chunks, so that each node just aggregates one chunk. They quantize these chunks to low precision and send them to corresponding nodes with `MPI_Isend`. At the same time, each node `MPI_Irecv` one compressed chunk from all other nodes and conduct dequantization. For example, every node sends first chunk to first node, and second chunk to second node.
