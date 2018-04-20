@@ -1081,7 +1081,7 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
                 .data() : first_entry.tensor.tensor_data().data();
 
     AggregateGradient(dequan_buffer, mutex_maxmin, cuda_states, maxandmin_send, maxandmin_recv, 
-                      quantizedGradients, quantizedGradients_recv, entries, buffer_data);
+                      quantizedGradients, quantizedGradients_recv, entries, buffer_data, horovod_global.tensor_fusion_threshold);
     
 
     for (auto it = entries.begin(); it != entries.end(); it++) 
