@@ -1080,8 +1080,41 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
                 ->tensor_data()
                 .data() : first_entry.tensor.tensor_data().data();
 
-    AggregateGradient(dequan_buffer, mutex_maxmin, cuda_states, maxandmin_send, maxandmin_recv, 
-                      quantizedGradients, quantizedGradients_recv, entries, buffer_data, horovod_global.tensor_fusion_threshold);
+      
+    if (entries.size() > 1 || first_entry.tensor.tensor_data().size() <= tensor_fusion_threshold)
+	{
+	    // Copy memory into the fusion buffer.
+	    ACTIVITY_START_ALL(entries, timeline, "MEMCPY_IN_FUSION_BUFFER")
+	    size_t offset = 0;
+	    for (auto it = entries.begin(); it != entries.end(); it++) {
+	#if HAVE_CUDA
+	      if (on_gpu) {
+	        CUDA_CHECK(
+	            entries, "cudaMemcpyAsync",
+	            cudaMemcpyAsync((void*)(buffer_data + offset),
+	                            (const void*)it->tensor.tensor_data().data(),
+	                            it->tensor.tensor_data().size(),
+	                            cudaMemcpyDeviceToDevice,
+	                            horovod_global.streams[first_entry.device]))
+	      } else {
+	#endif
+	        memcpy((void*)(buffer_data + offset),
+	               (const void*)it->tensor.tensor_data().data(),
+	               it->tensor.tensor_data().size());
+	#if HAVE_CUDA
+	      }
+	#endif
+	      offset += it->tensor.tensor_data().size();
+	    }
+	#if HAVE_CUDA
+	    if (on_gpu) {
+	      CUDA_CHECK(
+	          entries, "cudaStreamSynchronize",
+	          cudaStreamSynchronize(horovod_global.streams[first_entry.device]))
+	    }
+	#endif
+	    ACTIVITY_END_ALL(entries, timeline)
+	    ACTIVITY_START_ALL(entries, timeline, "MPI_ALLREDUCE")
     
 
     for (auto it = entries.begin(); it != entries.end(); it++) 
