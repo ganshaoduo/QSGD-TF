@@ -36,9 +36,7 @@ curandState* GPUInit_curand(int n, unsigned int seed, cudaStream_t stream);
 void GPUQuantizeValue(unsigned char *x, float *y, float *maxandmin, int n, curandState* states, cudaStream_t stream);
 void GPUDequantizeValue(unsigned char *recv, float *maxandmin, float *x, int n, cudaStream_t stream);
 void GPUCopyValue(float* x, float* y, int n, cudaStream_t stream);
-void AggregateGradient(float *dequan_buffer, int *mutex_maxmin, curandState* cuda_states, std::vector<float*> maxandmin_send, 
-	std::vector<float*> maxandmin_recv, std::vector<unsigned char*> quantizedGradients, 
-	std::vector<unsigned char*> quantizedGradients_recv, std::vector<TensorTableEntry> entries, auto buffer_data, size_t tensor_fusion_threshold);
+
 
 void GPUFindMaxAndMin2(float *array, float *max, float *min, int *mutex, int n, cudaStream_t stream);
 
