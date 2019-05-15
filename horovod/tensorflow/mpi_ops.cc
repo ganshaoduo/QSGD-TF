@@ -1289,12 +1289,11 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
       int counter3 = 0;
       for(int i = 0; i < numNodes; i++)
       {
+        int start_offset = (numElemsPerNode * i) + std::min(residue, i);
+        int length = numElemsPerNode + ((i < residue) ? 1 : 0);
+
         if(i != rank)
         {
-
-          int start_offset = (numElemsPerNode * i) + std::min(residue, i);
-          int length = numElemsPerNode + ((i < residue) ? 1 : 0);
-
           //dequantize chunk from node i in dequan_buffer     
           GPUDequantizeValue(quantizedGradients[counter3], maxandmin_send[counter3], 
             dequan_buffer, length, horovod_global.streams[first_entry.device]);
@@ -1302,7 +1301,20 @@ void PerformOperation(TensorTable& tensor_table, MPIResponse response) {
           //copy dequantized data to right place of data_buffer
           GPUCopyValue((float*)buffer_data + division_offset + start_offset, dequan_buffer, length, 
             horovod_global.streams[first_entry.device]);
+          
           counter3++;
+        }
+        // apply the quantized gradient in the node itself, such that all models are same among nodes.
+        else if(i == rank) 
+        {
+          //dequantize chunk from node i in dequan_buffer     
+          GPUDequantizeValue(quantizedGradients_recv[0], maxandmin_recv[0], 
+            dequan_buffer, length, horovod_global.streams[first_entry.device]);
+          
+          //copy dequantized data to right place of data_buffer
+          GPUCopyValue((float*)buffer_data + division_offset + start_offset, dequan_buffer, length, 
+            horovod_global.streams[first_entry.device]);
+
         }   
       }
 
